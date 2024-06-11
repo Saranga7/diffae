@@ -290,7 +290,7 @@ def train_cls(conf: TrainConfig, gpus):
 
     if not os.path.exists(conf.logdir):
         os.makedirs(conf.logdir)
-    checkpoint = ModelCheckpoint(
+    checkpoint = ModelCheckpoint(   #from pytorch lightning
         dirpath=f'{conf.logdir}',
         save_last=True,
         save_top_k=1,

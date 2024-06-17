@@ -65,7 +65,8 @@ class ClsModel(pl.LightningModule):
 
         if conf.manipulate_mode in [ManipulateMode.celebahq_all]:
             num_cls = len(CelebAttrDataset.id_to_cls)
-        elif conf.manipulate_mode.is_single_class():
+
+        elif conf.manipulate_mode.is_single_class(): # Must hit this for FFHQ-M/F classifier
             num_cls = 1
         else:
             raise NotImplementedError()
@@ -154,6 +155,12 @@ class ClsModel(pl.LightningModule):
                                       self.conf.img_size,
                                       data_paths['celebahq_anno'],
                                       do_augment=True)
+        
+        elif self.conf.manipulate_mode == ManipulateMode.ffhq_mf:
+            return AnnotatedFFHQDataset(data_paths['ffhq_mf'],
+                                        img_size = self.conf.img_size,
+                                      do_augment=True)
+        
         else:
             raise NotImplementedError()
 
@@ -240,20 +247,33 @@ class ClsModel(pl.LightningModule):
             print('pred:', pred.shape)
         else:
             raise NotImplementedError()
+        
+        # print(f"MANIPULATE MODE: {self.conf.manipulate_mode}")
 
         if self.conf.manipulate_mode.is_celeba_attr():
             gt = torch.where(labels > 0,
                              torch.ones_like(labels).float(),
                              torch.zeros_like(labels).float())
+            
+        elif self.conf.manipulate_mode == ManipulateMode.ffhq_mf:
+            gt = labels.float()
+            gt = gt.unsqueeze(1)
+            
         elif self.conf.manipulate_mode == ManipulateMode.relighting:
             gt = labels
+        
         else:
             raise NotImplementedError()
 
         if self.conf.manipulate_loss == ManipulateLossType.bce:
+            ######
+            # print(pred.shape)
+            # print(gt.shape)
+            #######
             loss = F.binary_cross_entropy_with_logits(pred, gt)
             if pred_ema is not None:
                 loss_ema = F.binary_cross_entropy_with_logits(pred_ema, gt)
+
         elif self.conf.manipulate_loss == ManipulateLossType.mse:
             loss = F.mse_loss(pred, gt)
             if pred_ema is not None:
@@ -337,3 +357,5 @@ def train_cls(conf: TrainConfig, gpus):
         plugins=plugins,
     )
     trainer.fit(model)
+
+    print("\n\nTraining finished!")

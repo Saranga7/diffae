@@ -58,6 +58,8 @@ class ManipulateMode(Enum):
     d2c_fewshot = 'd2cfewshot'
     d2c_fewshot_allneg = 'd2cfewshotallneg'
 
+    ffhq_mf = 'ffhq_mf'
+
     def is_celeba_attr(self):
         return self in [
             ManipulateMode.d2c_fewshot,
@@ -69,6 +71,8 @@ class ManipulateMode(Enum):
         return self in [
             ManipulateMode.d2c_fewshot,
             ManipulateMode.d2c_fewshot_allneg,
+            
+            ManipulateMode.ffhq_mf
         ]
 
     def is_fewshot(self):
@@ -177,3 +181,10 @@ class Activation(Enum):
 class ManipulateLossType(Enum):
     bce = 'bce'
     mse = 'mse'
+
+
+
+
+if __name__ == "__main__":
+  
+    print(TrainMode.manipulate.is_manipulate())

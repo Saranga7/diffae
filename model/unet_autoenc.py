@@ -22,6 +22,29 @@ class BeatGANsAutoencConfig(BeatGANsUNetConfig):
 
     def make_model(self):
         return BeatGANsAutoencModel(self)
+    
+
+class Classifier_Component(nn.Module):
+
+    def __init__(self, classifier_checkpoint_path, style_dim, num_classes = 2):
+        super().__init__()
+        self.mobile_net = torch.hub.load('pytorch/vision:v0.10.0', 'mobilenet_v2')
+        self.mobile_net.classifier[1] = nn.Linear(1280, num_classes)
+        self.mobile_net.load_state_dict(torch.load(classifier_checkpoint_path))# map_location = device))
+
+        for param in self.mobile_net.parameters():
+                param.requires_grad = False
+
+        self.linear_projection = nn.Sequential(
+                nn.BatchNorm1d(style_dim + num_classes), # to normalize the concatenation, since classifier outputs and values in latent space may have different ranges
+                nn.Linear(style_dim + num_classes, style_dim)
+            )
+        
+    def forward(self, x, cond):       
+        c_x = self.mobile_net(x)
+        cond_class = torch.cat([c_x, cond], axis = 1)
+        return self.linear_projection(cond_class)
+
 
 
 class BeatGANsAutoencModel(BeatGANsUNetModel):
@@ -56,6 +79,11 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
             use_new_attention_order=conf.use_new_attention_order,
             pool=conf.enc_pool,
         ).make_model()
+
+        # print('Classifier path:', conf.classifier_path)
+        classifier_path = "checkpoints/classifier/FFHQ_Gender.pth"
+        self.classifier_component = Classifier_Component(classifier_checkpoint_path = classifier_path, 
+                                                         style_dim = conf.enc_out_channels)
 
         if conf.latent_net_conf is not None:
             self.latent_net = conf.latent_net_conf.make_model()
@@ -128,6 +156,7 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
                 style=None,
                 noise=None,
                 t_cond=None,
+                include_classifier = None,
                 **kwargs):
         """
         Apply the model to an input batch.
@@ -138,9 +167,11 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
             noise: random noise (to predict the cond)
         """
 
+
         if t_cond is None:
             t_cond = t
 
+        # Not implemented!
         if noise is not None:
             # if the noise is given, we predict the cond from noise
             cond = self.noise_to_cond(noise)
@@ -152,6 +183,14 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
             # tmp = self.encode(x_start)
             # cond = tmp['cond']
             cond = self.encode(x_start)
+
+
+        # Add classifier here
+        if include_classifier is not None:
+            cond = include_classifier(x = x_start, cond = cond)
+
+
+        
 
         if t is not None:
             _t_emb = timestep_embedding(t, self.conf.model_channels)

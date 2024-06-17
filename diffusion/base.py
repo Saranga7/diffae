@@ -101,6 +101,7 @@ class GaussianDiffusionBeatGans:
                         model: Model,
                         x_start: th.Tensor,
                         t: th.Tensor,
+                        include_classifier = None,
                         model_kwargs=None,
                         noise: th.Tensor = None):
         """
@@ -118,7 +119,7 @@ class GaussianDiffusionBeatGans:
         if model_kwargs is None:
             model_kwargs = {}
         if noise is None:
-            noise = th.randn_like(x_start)
+            noise = th.randn_like(x_start)   # Defining the gaussian noise
 
         x_t = self.q_sample(x_start, t, noise=noise)
 
@@ -133,6 +134,7 @@ class GaussianDiffusionBeatGans:
                 model_forward = model.forward(x=x_t.detach(),
                                               t=self._scale_timesteps(t),
                                               x_start=x_start.detach(),
+                                              include_classifier = include_classifier,
                                               **model_kwargs)
             model_output = model_forward.pred
 

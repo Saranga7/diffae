@@ -25,6 +25,9 @@ from metrics import *
 from renderer import *
 
 
+    
+
+
 class LitModel(pl.LightningModule):
     def __init__(self, conf: TrainConfig):
         super().__init__()
@@ -41,10 +44,14 @@ class LitModel(pl.LightningModule):
         self.ema_model.requires_grad_(False)
         self.ema_model.eval()
 
+        # Model Size
         model_size = 0
         for param in self.model.parameters():
             model_size += param.data.nelement()
         print('Model params: %.2f M' % (model_size / 1024 / 1024))
+
+        # classifier component
+        # self.classifier_component = Classifier_Component(conf.classifier_path, conf.style_ch)
 
         self.sampler = conf.make_diffusion_conf().make_sampler()
         self.eval_sampler = conf.make_eval_diffusion_conf().make_sampler()
@@ -372,9 +379,24 @@ class LitModel(pl.LightningModule):
                 """
                 # with numpy seed we have the problem that the sample t's are related!
                 t, weight = self.T_sampler.sample(len(x_start), x_start.device)
-                losses = self.sampler.training_losses(model=self.model,
-                                                      x_start=x_start,
-                                                      t=t)
+
+
+                if self.conf.include_classifier:
+                    include_classifier = self.model.classifier_component
+                else:
+                    include_classifier = None
+
+                losses = self.sampler.training_losses(model = self.model,
+                                                            include_classifier = include_classifier,
+                                                            x_start = x_start,
+                                                            t = t,
+                                                            )
+                # print(len(losses))
+                # print(losses.keys())
+                # print(losses['loss'])
+                # print(losses['loss'].shape)
+             
+
             elif self.conf.train_mode.is_latent_diffusion():
                 """
                 training the latent variables!
@@ -392,20 +414,62 @@ class LitModel(pl.LightningModule):
                 raise NotImplementedError()
 
             loss = losses['loss'].mean()
+
+            # to enforce a classifier loss
+            if self.conf.include_classifier:
+                classifier_op_original = self.model.classifier_component.mobile_net(x_start.detach())
+                classifier_op_original_prob = F.softmax(classifier_op_original, dim = 1) 
+
+                # Generate image
+                cond = self.encode(x_start.detach())
+                cond = self.model.classifier_component(x = x_start.detach(), cond = cond)
+                xT = self.encode_stochastic(x_start.detach(), cond)
+                generated_image = self.render(xT.detach(), cond)
+
+                classifier_op_generated = self.model.classifier_component.mobile_net(generated_image)
+                classifier_op_generated_log_prob = F.log_softmax(classifier_op_generated, dim = 1)  # Convert to log probabilities
+
+                # KL Divergence between original image classifier output vs generated image classifier output
+                kl_div_loss = F.kl_div(classifier_op_generated_log_prob, classifier_op_original_prob, reduction = 'batchmean')
+
+                total_loss = loss + kl_div_loss
+
+            else:
+                total_loss = loss
+            
+                # print(x_start.shape)
+                # print(classifier_op_original_prob.shape)
+                # print(classifier_op_original[0])
+                # print(classifier_op_original_prob[0])
+                # print()
+                # print(generated_image.shape)
+                # print(classifier_op_generated_log_prob.shape)
+                # print(classifier_op_generated[0])
+                # print(classifier_op_generated_log_prob[0])
+
+                # print("\n\nKL Divergence:\n")
+
+
+                 # exit()
+
             # divide by accum batches to make the accumulated gradient exact!
             for key in ['loss', 'vae', 'latent', 'mmd', 'chamfer', 'arg_cnt']:
                 if key in losses:
                     losses[key] = self.all_gather(losses[key]).mean()
 
+
             if self.global_rank == 0:
                 self.logger.experiment.add_scalar('loss', losses['loss'],
                                                   self.num_samples)
+                self.logger.experiment.add_scalar('kl_div_loss', kl_div_loss, self.num_samples)
+                self.logger.experiment.add_scalar('total_loss', total_loss, self.num_samples)
+                
                 for key in ['vae', 'latent', 'mmd', 'chamfer', 'arg_cnt']:
                     if key in losses:
                         self.logger.experiment.add_scalar(
                             f'loss/{key}', losses[key], self.num_samples)
 
-        return {'loss': loss}
+        return {'loss': total_loss}
 
     def on_train_batch_end(self, outputs, batch, batch_idx: int,
                            dataloader_idx: int) -> None:
@@ -685,26 +749,27 @@ class LitModel(pl.LightningModule):
         """
         "infer" = predict the latent variables using the encoder on the whole dataset
         """
-        if 'infer' in self.conf.eval_programs:
-            if 'infer' in self.conf.eval_programs:
-                print('infer ...')
-                conds = self.infer_whole_dataset().float()
-                # NOTE: always use this path for the latent.pkl files
-                save_path = f'checkpoints/{self.conf.name}/latent.pkl'
-            else:
-                raise NotImplementedError()
 
-            if self.global_rank == 0:
-                conds_mean = conds.mean(dim=0)
-                conds_std = conds.std(dim=0)
-                if not os.path.exists(os.path.dirname(save_path)):
-                    os.makedirs(os.path.dirname(save_path))
-                torch.save(
-                    {
-                        'conds': conds,
-                        'conds_mean': conds_mean,
-                        'conds_std': conds_std,
-                    }, save_path)
+        if 'infer' in self.conf.eval_programs:
+            print('infer ...')
+            conds = self.infer_whole_dataset().float()
+            # NOTE: always use this path for the latent.pkl files
+            save_path = f'checkpoints/{self.conf.name}/latent.pkl'
+        else:
+            raise NotImplementedError()
+
+        if self.global_rank == 0:
+            conds_mean = conds.mean(dim=0)
+            conds_std = conds.std(dim=0)
+            if not os.path.exists(os.path.dirname(save_path)):
+                os.makedirs(os.path.dirname(save_path))
+            torch.save(
+                {
+                    'conds': conds,
+                    'conds_mean': conds_mean,
+                    'conds_std': conds_std,
+                }, save_path)
+            
         """
         "infer+render" = predict the latent variables using the encoder on the whole dataset
         THIS ALSO GENERATE CORRESPONDING IMAGES
@@ -874,6 +939,17 @@ def is_time(num_samples, every, step_size):
     return num_samples - closest < step_size
 
 
+
+
+
+
+
+
+
+
+
+
+
 def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
     print('conf:', conf.name)
     # assert not (conf.fp16 and conf.grad_clip > 0
@@ -936,6 +1012,8 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
 
     if mode == 'train':
         trainer.fit(model)
+        print("\n\nTraining completed")
+
     elif mode == 'eval':
         # load the latest checkpoint
         # perform lpips
@@ -971,5 +1049,6 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
             with open(tgt, 'a') as f:
                 f.write(json.dumps(out) + "\n")
             # pd.DataFrame(out).to_csv(tgt)
+            print("\n\nFini!")
     else:
         raise NotImplementedError()

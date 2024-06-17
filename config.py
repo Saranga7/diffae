@@ -39,6 +39,10 @@ data_paths = {
         'datasets/celeba_anno/CelebAMask-HQ-attribute-anno.txt'),
     'celeba_relight':
     os.path.expanduser('datasets/celeba_hq_light/celeba_light.txt'),
+
+    'ffhq_mf':
+    '/projects/deepdevpath/Saranga/Explaining-In-Style-Reproducibility-Study/data'    
+
 }
 
 
@@ -162,6 +166,9 @@ class TrainConfig(BaseConfig):
     work_cache_dir: str = os.path.expanduser('~/mycache')
     # to be overridden
     name: str = ''
+    # including classifier component
+    include_classifier: bool = False
+    classifier_path = 'checkpoints/classifier/FFHQ_Gender.pth'
 
     def __post_init__(self):
         self.batch_size_eval = self.batch_size_eval or self.batch_size

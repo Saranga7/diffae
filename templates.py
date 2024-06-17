@@ -201,44 +201,59 @@ def ffhq128_autoenc_130M():
     return conf
 
 
-def horse128_ddpm():
-    conf = ffhq128_ddpm()
-    conf.data_name = 'horse256'
+
+
+def ffhq128_autoenc_w_classifier():
+    conf = ffhq128_autoenc_base()
     conf.total_samples = 130_000_000
     conf.eval_ema_every_samples = 10_000_000
     conf.eval_every_samples = 10_000_000
-    conf.name = 'horse128_ddpm'
+    conf.name = 'ffhq128_autoenc_w_classifier'
+    # conf.batch_size = 16
+    # conf.accum_batches = 2
+    conf.include_classifier = True
     return conf
 
 
-def horse128_autoenc():
-    conf = ffhq128_autoenc_base()
-    conf.data_name = 'horse256'
-    conf.total_samples = 130_000_000
-    conf.eval_ema_every_samples = 10_000_000
-    conf.eval_every_samples = 10_000_000
-    conf.name = 'horse128_autoenc'
-    return conf
+
+# def horse128_ddpm():
+#     conf = ffhq128_ddpm()
+#     conf.data_name = 'horse256'
+#     conf.total_samples = 130_000_000
+#     conf.eval_ema_every_samples = 10_000_000
+#     conf.eval_every_samples = 10_000_000
+#     conf.name = 'horse128_ddpm'
+#     return conf
 
 
-def bedroom128_ddpm():
-    conf = ffhq128_ddpm()
-    conf.data_name = 'bedroom256'
-    conf.eval_ema_every_samples = 10_000_000
-    conf.eval_every_samples = 10_000_000
-    conf.total_samples = 120_000_000
-    conf.name = 'bedroom128_ddpm'
-    return conf
+# def horse128_autoenc():
+#     conf = ffhq128_autoenc_base()
+#     conf.data_name = 'horse256'
+#     conf.total_samples = 130_000_000
+#     conf.eval_ema_every_samples = 10_000_000
+#     conf.eval_every_samples = 10_000_000
+#     conf.name = 'horse128_autoenc'
+#     return conf
 
 
-def bedroom128_autoenc():
-    conf = ffhq128_autoenc_base()
-    conf.data_name = 'bedroom256'
-    conf.eval_ema_every_samples = 10_000_000
-    conf.eval_every_samples = 10_000_000
-    conf.total_samples = 120_000_000
-    conf.name = 'bedroom128_autoenc'
-    return conf
+# def bedroom128_ddpm():
+#     conf = ffhq128_ddpm()
+#     conf.data_name = 'bedroom256'
+#     conf.eval_ema_every_samples = 10_000_000
+#     conf.eval_every_samples = 10_000_000
+#     conf.total_samples = 120_000_000
+#     conf.name = 'bedroom128_ddpm'
+#     return conf
+
+
+# def bedroom128_autoenc():
+#     conf = ffhq128_autoenc_base()
+#     conf.data_name = 'bedroom256'
+#     conf.eval_ema_every_samples = 10_000_000
+#     conf.eval_every_samples = 10_000_000
+#     conf.total_samples = 120_000_000
+#     conf.name = 'bedroom128_autoenc'
+#     return conf
 
 
 def pretrain_celeba64d2c_72M():
@@ -282,21 +297,21 @@ def pretrain_ffhq256_autoenc():
     return conf
 
 
-def pretrain_horse128():
-    conf = horse128_autoenc()
-    conf.pretrain = PretrainConfig(
-        name='82M',
-        path=f'checkpoints/{horse128_autoenc().name}/last.ckpt',
-    )
-    conf.latent_infer_path = f'checkpoints/{horse128_autoenc().name}/latent.pkl'
-    return conf
+# def pretrain_horse128():
+#     conf = horse128_autoenc()
+#     conf.pretrain = PretrainConfig(
+#         name='82M',
+#         path=f'checkpoints/{horse128_autoenc().name}/last.ckpt',
+#     )
+#     conf.latent_infer_path = f'checkpoints/{horse128_autoenc().name}/latent.pkl'
+#     return conf
 
 
-def pretrain_bedroom128():
-    conf = bedroom128_autoenc()
-    conf.pretrain = PretrainConfig(
-        name='120M',
-        path=f'checkpoints/{bedroom128_autoenc().name}/last.ckpt',
-    )
-    conf.latent_infer_path = f'checkpoints/{bedroom128_autoenc().name}/latent.pkl'
-    return conf
+# def pretrain_bedroom128():
+#     conf = bedroom128_autoenc()
+#     conf.pretrain = PretrainConfig(
+#         name='120M',
+#         path=f'checkpoints/{bedroom128_autoenc().name}/last.ckpt',
+#     )
+#     conf.latent_infer_path = f'checkpoints/{bedroom128_autoenc().name}/latent.pkl'
+#     return conf

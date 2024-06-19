@@ -417,14 +417,16 @@ class LitModel(pl.LightningModule):
 
             # to enforce a classifier loss
             if self.conf.include_classifier:
-                classifier_op_original = self.model.classifier_component.mobile_net(x_start.detach())
+                classifier_op_original = self.model.classifier_component.mobile_net(x_start)
                 classifier_op_original_prob = F.softmax(classifier_op_original, dim = 1) 
 
                 # Generate image
-                cond = self.encode(x_start.detach())
-                cond = self.model.classifier_component(x = x_start.detach(), cond = cond)
-                xT = self.encode_stochastic(x_start.detach(), cond)
-                generated_image = self.render(xT.detach(), cond)
+                cond = self.encode(x_start)
+                cond = self.model.classifier_component(x = x_start, cond = cond)
+                xT = self.encode_stochastic(x_start, cond)
+                generated_image = self.render(xT, cond)
+
+                #remove all detaches
 
                 classifier_op_generated = self.model.classifier_component.mobile_net(generated_image)
                 classifier_op_generated_log_prob = F.log_softmax(classifier_op_generated, dim = 1)  # Convert to log probabilities
@@ -461,8 +463,10 @@ class LitModel(pl.LightningModule):
             if self.global_rank == 0:
                 self.logger.experiment.add_scalar('loss', losses['loss'],
                                                   self.num_samples)
-                self.logger.experiment.add_scalar('kl_div_loss', kl_div_loss, self.num_samples)
-                self.logger.experiment.add_scalar('total_loss', total_loss, self.num_samples)
+                
+                if self.conf.include_classifier:
+                    self.logger.experiment.add_scalar('kl_div_loss', kl_div_loss, self.num_samples)
+                    self.logger.experiment.add_scalar('total_loss', total_loss, self.num_samples)
                 
                 for key in ['vae', 'latent', 'mmd', 'chamfer', 'arg_cnt']:
                     if key in losses:
@@ -989,7 +993,7 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
         from pytorch_lightning.plugins import DDPPlugin
 
         # important for working with gradient checkpoint
-        plugins.append(DDPPlugin(find_unused_parameters=False))
+        plugins.append(DDPPlugin(find_unused_parameters=True))
 
     trainer = pl.Trainer(
         max_steps=conf.total_samples // conf.batch_size_effective,

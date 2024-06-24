@@ -33,8 +33,8 @@ def autoenc_base():
     base configuration for all Diff-AE models.
     """
     conf = TrainConfig()
-    conf.batch_size = 16
-    conf.accum_batches = 2
+    conf.batch_size = 32
+    conf.accum_batches = 4
     conf.beatgans_gen_type = GenerativeType.ddim
     conf.beta_scheduler = 'linear'
     conf.data_name = 'ffhq'

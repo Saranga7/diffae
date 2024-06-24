@@ -169,6 +169,7 @@ class TrainConfig(BaseConfig):
     # including classifier component
     include_classifier: bool = False
     classifier_path = 'checkpoints/classifier/FFHQ_Gender.pth'
+    kl_div_start_step = 0
 
     def __post_init__(self):
         self.batch_size_eval = self.batch_size_eval or self.batch_size

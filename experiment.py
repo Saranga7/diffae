@@ -24,7 +24,6 @@ from lmdb_writer import *
 from metrics import *
 from renderer import *
 
-
     
 
 
@@ -354,6 +353,30 @@ class LitModel(pl.LightningModule):
         conds = torch.cat(conds).float()
         return conds
 
+
+    
+    def _calculate_KL(self, x_start):
+        classifier_op_original = self.model.classifier_component.mobile_net(x_start)
+        classifier_op_original_prob = F.softmax(classifier_op_original, dim = 1) 
+
+        # Generate image
+        cond = self.encode(x_start)
+        cond = self.model.classifier_component(x = x_start, cond = cond)
+        xT = self.encode_stochastic(x_start, cond)
+        generated_image = self.render(xT, cond)
+
+        #remove all detaches
+
+        classifier_op_generated = self.model.classifier_component.mobile_net(generated_image)
+        classifier_op_generated_log_prob = F.log_softmax(classifier_op_generated, dim = 1)  # Convert to log probabilities
+
+        # KL Divergence between original image classifier output vs generated image classifier output
+        kl_div_loss = F.kl_div(classifier_op_generated_log_prob, classifier_op_original_prob, reduction = 'batchmean')
+
+        return kl_div_loss
+
+
+
     def training_step(self, batch, batch_idx):
         """
         given an input, calculate the loss function
@@ -391,11 +414,7 @@ class LitModel(pl.LightningModule):
                                                             x_start = x_start,
                                                             t = t,
                                                             )
-                # print(len(losses))
-                # print(losses.keys())
-                # print(losses['loss'])
-                # print(losses['loss'].shape)
-             
+                 
 
             elif self.conf.train_mode.is_latent_diffusion():
                 """
@@ -414,45 +433,20 @@ class LitModel(pl.LightningModule):
                 raise NotImplementedError()
 
             loss = losses['loss'].mean()
-
-            # to enforce a classifier loss
+            
             if self.conf.include_classifier:
-                classifier_op_original = self.model.classifier_component.mobile_net(x_start)
-                classifier_op_original_prob = F.softmax(classifier_op_original, dim = 1) 
 
-                # Generate image
-                cond = self.encode(x_start)
-                cond = self.model.classifier_component(x = x_start, cond = cond)
-                xT = self.encode_stochastic(x_start, cond)
-                generated_image = self.render(xT, cond)
+                if self.global_step >= self.conf.kl_div_start_step:
+                    kl_div_loss = self._calculate_KL(x_start)
+                    total_loss = loss + 0.1 * kl_div_loss
 
-                #remove all detaches
-
-                classifier_op_generated = self.model.classifier_component.mobile_net(generated_image)
-                classifier_op_generated_log_prob = F.log_softmax(classifier_op_generated, dim = 1)  # Convert to log probabilities
-
-                # KL Divergence between original image classifier output vs generated image classifier output
-                kl_div_loss = F.kl_div(classifier_op_generated_log_prob, classifier_op_original_prob, reduction = 'batchmean')
-
-                total_loss = loss + kl_div_loss
-
+                else:
+                    total_loss = loss
+            
             else:
                 total_loss = loss
             
-                # print(x_start.shape)
-                # print(classifier_op_original_prob.shape)
-                # print(classifier_op_original[0])
-                # print(classifier_op_original_prob[0])
-                # print()
-                # print(generated_image.shape)
-                # print(classifier_op_generated_log_prob.shape)
-                # print(classifier_op_generated[0])
-                # print(classifier_op_generated_log_prob[0])
 
-                # print("\n\nKL Divergence:\n")
-
-
-                 # exit()
 
             # divide by accum batches to make the accumulated gradient exact!
             for key in ['loss', 'vae', 'latent', 'mmd', 'chamfer', 'arg_cnt']:
@@ -465,7 +459,8 @@ class LitModel(pl.LightningModule):
                                                   self.num_samples)
                 
                 if self.conf.include_classifier:
-                    self.logger.experiment.add_scalar('kl_div_loss', kl_div_loss, self.num_samples)
+                    if self.global_step >= self.conf.kl_div_start_step:
+                        self.logger.experiment.add_scalar('kl_div_loss', kl_div_loss, self.num_samples)
                     self.logger.experiment.add_scalar('total_loss', total_loss, self.num_samples)
                 
                 for key in ['vae', 'latent', 'mmd', 'chamfer', 'arg_cnt']:
@@ -485,8 +480,7 @@ class LitModel(pl.LightningModule):
             # if it is the iteration that has optimizer.step()
             if self.conf.train_mode == TrainMode.latent_diffusion:
                 # it trains only the latent hence change only the latent
-                ema(self.model.latent_net, self.ema_model.latent_net,
-                    self.conf.ema_decay)
+                ema(self.model.latent_net, self.ema_model.latent_net, self.conf.ema_decay)
             else:
                 ema(self.model, self.ema_model, self.conf.ema_decay)
 
@@ -536,8 +530,7 @@ class LitModel(pl.LightningModule):
                     else:
                         _xstart = None
 
-                    if self.conf.train_mode.is_latent_diffusion(
-                    ) and not use_xstart:
+                    if self.conf.train_mode.is_latent_diffusion() and not use_xstart:
                         # diffusion of the latent first
                         gen = render_uncondition(
                             conf=self.conf,
@@ -547,9 +540,9 @@ class LitModel(pl.LightningModule):
                             latent_sampler=self.eval_latent_sampler,
                             conds_mean=self.conds_mean,
                             conds_std=self.conds_std)
+                        
                     else:
-                        if not use_xstart and self.conf.model_type.has_noise_to_cond(
-                        ):
+                        if not use_xstart and self.conf.model_type.has_noise_to_cond():
                             model: BeatGANsAutoencModel
                             # special case, it may not be stochastic, yet can sample
                             cond = torch.randn(len(x_T),
@@ -564,6 +557,8 @@ class LitModel(pl.LightningModule):
                                     cond = (cond + cond[i]) / 2
                             else:
                                 cond = None
+                                print("\n\n\nWorkflow reached to None conditioning\n\n\n")
+
                         gen = self.eval_sampler.sample(model=model,
                                                        noise=x_T,
                                                        cond=cond,
@@ -602,39 +597,29 @@ class LitModel(pl.LightningModule):
                                                      self.num_samples)
             model.train()
 
-        if self.conf.sample_every_samples > 0 and is_time(
-                self.num_samples, self.conf.sample_every_samples,
-                self.conf.batch_size_effective):
+        if self.conf.sample_every_samples > 0 and is_time(self.num_samples, self.conf.sample_every_samples, self.conf.batch_size_effective):
 
             if self.conf.train_mode.require_dataset_infer():
                 do(self.model, '', use_xstart=False)
                 do(self.ema_model, '_ema', use_xstart=False)
             else:
-                if self.conf.model_type.has_autoenc(
-                ) and self.conf.model_type.can_sample():
+                if self.conf.model_type.has_autoenc() and self.conf.model_type.can_sample():
                     do(self.model, '', use_xstart=False)
                     do(self.ema_model, '_ema', use_xstart=False)
                     # autoencoding mode
                     do(self.model, '_enc', use_xstart=True, save_real=True)
-                    do(self.ema_model,
-                       '_enc_ema',
-                       use_xstart=True,
-                       save_real=True)
+                    do(self.ema_model, '_enc_ema', use_xstart=True,save_real=True)
+
                 elif self.conf.train_mode.use_latent_net():
                     do(self.model, '', use_xstart=False)
                     do(self.ema_model, '_ema', use_xstart=False)
                     # autoencoding mode
                     do(self.model, '_enc', use_xstart=True, save_real=True)
-                    do(self.model,
-                       '_enc_nodiff',
-                       use_xstart=True,
-                       save_real=True,
-                       no_latent_diff=True)
-                    do(self.ema_model,
-                       '_enc_ema',
-                       use_xstart=True,
-                       save_real=True)
+                    do(self.model, '_enc_nodiff', use_xstart=True, save_real=True, no_latent_diff=True)
+                    do(self.ema_model, '_enc_ema', use_xstart=True, save_real=True)
+
                 else:
+                    print("\n\n\nYou were right \n\n\n")
                     do(self.model, '', use_xstart=True, save_real=True)
                     do(self.ema_model, '_ema', use_xstart=True, save_real=True)
 
@@ -952,13 +937,11 @@ def is_time(num_samples, every, step_size):
 
 
 
-
-
 def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
     print('conf:', conf.name)
     # assert not (conf.fp16 and conf.grad_clip > 0
     #             ), 'pytorch lightning has bug with amp + gradient clipping'
-    model = LitModel(conf)
+    # model = LitModel(conf)
 
     if not os.path.exists(conf.logdir):
         os.makedirs(conf.logdir)
@@ -993,7 +976,11 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
         from pytorch_lightning.plugins import DDPPlugin
 
         # important for working with gradient checkpoint
-        plugins.append(DDPPlugin(find_unused_parameters=True))
+
+        if conf.classifier_path:
+            plugins.append(DDPPlugin(find_unused_parameters=False))
+        else:
+            plugins.append(DDPPlugin(find_unused_parameters=True))
 
     trainer = pl.Trainer(
         max_steps=conf.total_samples // conf.batch_size_effective,
@@ -1013,6 +1000,11 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
         accumulate_grad_batches=conf.accum_batches,
         plugins=plugins,
     )
+
+    torch.cuda.set_device(trainer.local_rank % len(gpus))
+    torch.cuda.empty_cache()
+    
+    model = LitModel(conf)
 
     if mode == 'train':
         trainer.fit(model)

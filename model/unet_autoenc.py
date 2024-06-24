@@ -36,7 +36,7 @@ class Classifier_Component(nn.Module):
                 param.requires_grad = False
 
         self.linear_projection = nn.Sequential(
-                # nn.BatchNorm1d(style_dim + num_classes), # to normalize the concatenation, since classifier outputs and values in latent space may have different ranges
+                nn.BatchNorm1d(style_dim + num_classes), # to normalize the concatenation, since classifier outputs and values in latent space may have different ranges
                 nn.Linear(style_dim + num_classes, style_dim)
             )
         

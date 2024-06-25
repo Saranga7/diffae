@@ -559,6 +559,10 @@ class LitModel(pl.LightningModule):
                                 cond = None
                                 print("\n\n\nWorkflow reached to None conditioning\n\n\n")
 
+                                # Adding classifier component and conditioning
+                                cond = model.encoder(_xstart)
+                                cond = model.classifier_component(x = _xstart, cond = cond)
+
                         gen = self.eval_sampler.sample(model=model,
                                                        noise=x_T,
                                                        cond=cond,

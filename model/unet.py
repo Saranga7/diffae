@@ -69,6 +69,8 @@ class BeatGANsUNetConfig(BaseConfig):
     resnet_use_zero_module: bool = True
     # gradient checkpoint the attention operation
     attn_checkpoint: bool = False
+    # # I added the classifier component flag
+    # include_classifier: bool = False
 
     def make_model(self):
         return BeatGANsUNetModel(self)
@@ -301,6 +303,8 @@ class BeatGANsUNetModel(nn.Module):
         :param y: an [N] Tensor of labels, if class-conditional.
         :return: an [N x C x ...] Tensor of outputs.
         """
+        print("\n\nUNET: Forward\n\n")
+
         assert (y is not None) == (
             self.conf.num_classes is not None
         ), "must specify y if and only if the model is class-conditional"

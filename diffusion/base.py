@@ -188,7 +188,8 @@ class GaussianDiffusionBeatGans:
                x_start=None,
                clip_denoised=True,
                model_kwargs=None,
-               progress=False):
+               progress=False,
+               include_classifier = None):
         """
         Args:
             x_start: given for the autoencoder
@@ -212,7 +213,8 @@ class GaussianDiffusionBeatGans:
                                          noise=noise,
                                          clip_denoised=clip_denoised,
                                          model_kwargs=model_kwargs,
-                                         progress=progress)
+                                         progress=progress,
+                                         include_classifier = include_classifier)
         else:
             raise NotImplementedError()
 
@@ -279,7 +281,8 @@ class GaussianDiffusionBeatGans:
                         t,
                         clip_denoised=True,
                         denoised_fn=None,
-                        model_kwargs=None):
+                        model_kwargs=None,
+                        include_classifier = None):
         """
         Apply the model to get p(x_{t-1} | x_t), as well as a prediction of
         the initial x, x_0.
@@ -308,6 +311,7 @@ class GaussianDiffusionBeatGans:
         with autocast(self.conf.fp16):
             model_forward = model.forward(x=x,
                                           t=self._scale_timesteps(t),
+                                          include_classifier = include_classifier,
                                           **model_kwargs)
         model_output = model_forward.pred
 
@@ -593,6 +597,7 @@ class GaussianDiffusionBeatGans:
         cond_fn=None,
         model_kwargs=None,
         eta=0.0,
+        include_classifier = None,
     ):
         """
         Sample x_{t-1} from the model using DDIM.
@@ -606,6 +611,7 @@ class GaussianDiffusionBeatGans:
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
+            include_classifier = include_classifier,
         )
         if cond_fn is not None:
             out = self.condition_score(cond_fn,
@@ -727,6 +733,7 @@ class GaussianDiffusionBeatGans:
         device=None,
         progress=False,
         eta=0.0,
+        include_classifier = None,
     ):
         """
         Generate samples from the model using DDIM.
@@ -745,6 +752,7 @@ class GaussianDiffusionBeatGans:
                 device=device,
                 progress=progress,
                 eta=eta,
+                include_classifier = include_classifier,
         ):
             final = sample
         return final["sample"]
@@ -761,6 +769,7 @@ class GaussianDiffusionBeatGans:
         device=None,
         progress=False,
         eta=0.0,
+        include_classifier = None,
     ):
         """
         Use DDIM to sample from the model and yield intermediate samples from
@@ -803,6 +812,7 @@ class GaussianDiffusionBeatGans:
                     cond_fn=cond_fn,
                     model_kwargs=_kwargs,
                     eta=eta,
+                    include_classifier = include_classifier,
                 )
                 out['t'] = t
                 yield out

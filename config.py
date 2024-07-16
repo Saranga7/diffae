@@ -169,7 +169,8 @@ class TrainConfig(BaseConfig):
     # including classifier component
     include_classifier: bool = False
     classifier_path = 'checkpoints/classifier/FFHQ_Gender.pth'
-    kl_div_start_step = 0
+    classifier_loss_start_step = 0
+    classifier_loss = 'KLDiv'
 
     def __post_init__(self):
         self.batch_size_eval = self.batch_size_eval or self.batch_size
@@ -364,6 +365,7 @@ class TrainConfig(BaseConfig):
                 resnet_two_cond=self.net_beatgans_resnet_two_cond,
                 resnet_use_zero_module=self.
                 net_beatgans_resnet_use_zero_module,
+                # include_classifier=self.include_classifier,
             )
         elif self.model_name in [
                 ModelName.beatgans_autoenc,

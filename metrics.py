@@ -240,6 +240,7 @@ def evaluate_fid(
                     torchvision.utils.save_image(
                         batch_images[j],
                         os.path.join(conf.generate_dir, f'{img_name}.png'))
+                    
         elif conf.model_type == ModelType.autoencoder:
             if conf.train_mode.is_latent_diffusion():
                 # evaluate autoencoder + latent diffusion (doesn't give the images)

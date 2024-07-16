@@ -4,9 +4,10 @@ from templates_latent import *
 if __name__ == '__main__':
     # train the autoenc moodel
     # this requires V100s.
-    gpus = [0, 1, 2, 3]
+    gpus = [1, 2]
     conf = ffhq128_autoenc_w_classifier()
     conf.name = 'ffhq128_autoenc_w_classifier_weightedLoss_step_BN'
+    conf.include_classifier = True
     train(conf, gpus=gpus)
 
     # # infer the latents for training the latent DPM

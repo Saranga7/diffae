@@ -35,14 +35,18 @@ class Classifier_Component(nn.Module):
         for param in self.mobile_net.parameters():
                 param.requires_grad = False
 
-        self.linear_projection = nn.Sequential(
-                nn.BatchNorm1d(style_dim + num_classes), # to normalize the concatenation, since classifier outputs and values in latent space may have different ranges
-                nn.Linear(style_dim + num_classes, style_dim)
-            )
+        # self.linear_projection = nn.Sequential(
+        #         nn.BatchNorm1d(style_dim + num_classes), 
+        #         nn.Linear(style_dim + num_classes, style_dim)
+        #     )
+
+        self.linear_projection = nn.Linear(style_dim + num_classes, style_dim)
         
     def forward(self, x, cond):       
-        c_x = self.mobile_net(x)
-        cond_class = torch.cat([c_x, cond], axis = 1)
+        logits = self.mobile_net(x)
+        probabilities = F.softmax(logits, dim = 1)
+
+        cond_class = torch.cat([probabilities, cond], axis = 1)
         return self.linear_projection(cond_class)
 
 
@@ -81,9 +85,10 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
         ).make_model()
 
         # print('Classifier path:', conf.classifier_path)
+        # if self.conf.include_classifier:
         classifier_path = "checkpoints/classifier/FFHQ_Gender.pth"
         self.classifier_component = Classifier_Component(classifier_checkpoint_path = classifier_path, 
-                                                         style_dim = conf.enc_out_channels)
+                                                        style_dim = conf.enc_out_channels)
 
         if conf.latent_net_conf is not None:
             self.latent_net = conf.latent_net_conf.make_model()
@@ -167,7 +172,7 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
             noise: random noise (to predict the cond)
         """
 
-
+        # print("\n\nUNET_AUTOENC: Forward\n\n")
         if t_cond is None:
             t_cond = t
 
@@ -187,10 +192,10 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
 
         # Add classifier here
         if include_classifier is not None:
+            # print("\n\nClassifier included")
             cond = include_classifier(x = x_start, cond = cond)
 
 
-        
 
         if t is not None:
             _t_emb = timestep_embedding(t, self.conf.model_channels)

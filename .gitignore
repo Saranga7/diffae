@@ -14,3 +14,6 @@ checkpoints
 output_logs/
 
 .ipynb_checkpoints/
+wandb/
+tmp*
+tmp*/

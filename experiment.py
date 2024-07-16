@@ -8,7 +8,7 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 from numpy.lib.function_base import flip
-from pytorch_lightning import loggers as pl_loggers
+# from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.callbacks import *
 from torch import nn
 from torch.cuda import amp
@@ -23,6 +23,12 @@ from dist_utils import *
 from lmdb_writer import *
 from metrics import *
 from renderer import *
+
+import wandb
+from wandb import Image
+wandb.login(key = "280a63fbe206439a036945bcecd7d1f619763c7d")
+from pytorch_lightning.loggers import WandbLogger
+# wandb.init(project="Diffusion_AutoEncoder")
 
     
 
@@ -48,9 +54,6 @@ class LitModel(pl.LightningModule):
         for param in self.model.parameters():
             model_size += param.data.nelement()
         print('Model params: %.2f M' % (model_size / 1024 / 1024))
-
-        # classifier component
-        # self.classifier_component = Classifier_Component(conf.classifier_path, conf.style_ch)
 
         self.sampler = conf.make_diffusion_conf().make_sampler()
         self.eval_sampler = conf.make_eval_diffusion_conf().make_sampler()
@@ -123,39 +126,52 @@ class LitModel(pl.LightningModule):
         pred_img = (pred_img + 1) / 2
         return pred_img
 
-    def render(self, noise, cond=None, T=None):
+    def render(self, noise, cond=None, T=None, mode = 'ema'):
         if T is None:
             sampler = self.eval_sampler
         else:
             sampler = self.conf._make_diffusion_conf(T).make_sampler()
+        
+        if mode == 'ema':
+            model = self.ema_model
+        else:
+            model = self.model
 
         if cond is not None:
             pred_img = render_condition(self.conf,
-                                        self.ema_model,
+                                        model,
                                         noise,
                                         sampler=sampler,
                                         cond=cond)
         else:
             pred_img = render_uncondition(self.conf,
-                                          self.ema_model,
+                                          model,
                                           noise,
                                           sampler=sampler,
                                           latent_sampler=None)
         pred_img = (pred_img + 1) / 2
         return pred_img
 
-    def encode(self, x):
+    def encode(self, x, mode = 'ema'):
         # TODO:
         assert self.conf.model_type.has_autoenc()
-        cond = self.ema_model.encoder.forward(x)
+        if mode == 'ema':
+            model = self.ema_model
+        else:
+            model = self.model
+        cond = model.encoder.forward(x)
         return cond
 
-    def encode_stochastic(self, x, cond, T=None):
+    def encode_stochastic(self, x, cond, mode = 'ema', T=None):
         if T is None:
             sampler = self.eval_sampler
         else:
             sampler = self.conf._make_diffusion_conf(T).make_sampler()
-        out = sampler.ddim_reverse_sample_loop(self.ema_model,
+        if mode == 'ema':
+            model = self.ema_model
+        else:
+            model = self.model
+        out = sampler.ddim_reverse_sample_loop(model,
                                                x,
                                                model_kwargs={'cond': cond})
         return out['sample']
@@ -355,15 +371,15 @@ class LitModel(pl.LightningModule):
 
 
     
-    def _calculate_KL(self, x_start):
+    def _calculate_KL(self, x_start, mode = 'non_ema'):
         classifier_op_original = self.model.classifier_component.mobile_net(x_start)
         classifier_op_original_prob = F.softmax(classifier_op_original, dim = 1) 
 
         # Generate image
-        cond = self.encode(x_start)
+        cond = self.encode(x_start, mode = mode)
         cond = self.model.classifier_component(x = x_start, cond = cond)
-        xT = self.encode_stochastic(x_start, cond)
-        generated_image = self.render(xT, cond)
+        xT = self.encode_stochastic(x_start, cond, mode = mode)
+        generated_image = self.render(xT, cond, mode = mode)
 
         #remove all detaches
 
@@ -375,6 +391,27 @@ class LitModel(pl.LightningModule):
 
         return kl_div_loss
 
+
+
+    def _calculate_L2_norm(self, x_start, mode = 'non_ema'):
+        classifier_op_original = self.model.classifier_component.mobile_net(x_start)
+        classifier_op_original_prob = F.softmax(classifier_op_original, dim=1)
+
+        # Generate image
+        cond = self.encode(x_start, mode = mode)
+        cond = self.model.classifier_component(x = x_start, cond = cond)
+        xT = self.encode_stochastic(x_start, cond, mode = mode)
+        generated_image = self.render(xT, cond, mode = mode)
+
+        classifier_op_generated = self.model.classifier_component.mobile_net(generated_image)
+        classifier_op_generated_prob = F.softmax(classifier_op_generated, dim=1)
+
+        # L2 norm between original image classifier output probabilities and generated image classifier output probabilities
+        l2_norm_loss = torch.norm(classifier_op_original_prob - classifier_op_generated_prob, p=2, dim=1).mean()  # p=2 for L2 norm, mean over batch
+
+        return l2_norm_loss
+
+    
 
 
     def training_step(self, batch, batch_idx):
@@ -409,6 +446,10 @@ class LitModel(pl.LightningModule):
                 else:
                     include_classifier = None
 
+                # print("\n\n\n Check inference code \n\n\n")
+                # self.log_sample(x_start = x_start)
+                # exit()
+
                 losses = self.sampler.training_losses(model = self.model,
                                                             include_classifier = include_classifier,
                                                             x_start = x_start,
@@ -433,12 +474,40 @@ class LitModel(pl.LightningModule):
                 raise NotImplementedError()
 
             loss = losses['loss'].mean()
-            
-            if self.conf.include_classifier:
 
-                if self.global_step >= self.conf.kl_div_start_step:
-                    kl_div_loss = self._calculate_KL(x_start)
-                    total_loss = loss + 0.1 * kl_div_loss
+            # print("\nGlobal step")
+            # print(self.global_step)
+
+            # print("\nNo. of samples")
+            # print(self.num_samples)
+            # exit()
+
+            # Add L2 Norm loss
+            if self.conf.include_classifier:
+            
+                if self.num_samples >= self.conf.classifier_loss_start_step:
+
+                    if self.conf.classifier_loss == 'L2Norm':
+                        l2_norm_loss = self._calculate_L2_norm(x_start)
+                        annealing_steps = 5_000_000  # Define over how many steps to anneal
+                        annealing_weight = min(1, (self.num_samples - self.conf.classifier_loss_start_step) / annealing_steps)
+                        weight = 0.3 * annealing_weight  # Max weight of 0.1
+                        wandb.log({"L2Norm_weight": weight}, step = self.num_samples)
+
+                        total_loss = loss + weight * l2_norm_loss
+
+
+                    elif self.conf.classifier_loss == 'KLDiv':
+                        kl_div_loss = self._calculate_KL(x_start)  # Assume _calculate_KL calculates your KL divergence
+                        annealing_steps = 5_000_000  # Define over how many steps to anneal
+                        annealing_weight = min(1, (self.num_samples - self.conf.classifier_loss_start_step) / annealing_steps)
+                        weight = 0.1 * annealing_weight  # Max weight of 0.1
+                        wandb.log({"KLDiv_weight": weight}, step = self.num_samples)
+
+                        total_loss = loss + weight * kl_div_loss
+                    
+                    else:
+                        total_loss = loss
 
                 else:
                     total_loss = loss
@@ -455,18 +524,29 @@ class LitModel(pl.LightningModule):
 
 
             if self.global_rank == 0:
-                self.logger.experiment.add_scalar('loss', losses['loss'],
-                                                  self.num_samples)
+                log_data = {
+                            'loss': losses['loss'].item(),  
+                        }
+                
+                # self.logger.experiment.add_scalar('loss', losses['loss'],
+                #                                   self.num_samples)
                 
                 if self.conf.include_classifier:
-                    if self.global_step >= self.conf.kl_div_start_step:
-                        self.logger.experiment.add_scalar('kl_div_loss', kl_div_loss, self.num_samples)
-                    self.logger.experiment.add_scalar('total_loss', total_loss, self.num_samples)
+                    if self.num_samples >= self.conf.classifier_loss_start_step:
+                        if self.conf.classifier_loss == 'L2Norm':
+                            # self.logger.experiment.add_scalar('l2_norm_loss', l2_norm_loss, self.num_samples)
+                            log_data['l2_norm_loss'] = l2_norm_loss.item()
+                        elif self.conf.classifier_loss == 'KLDiv':
+                            log_data['kl_div_loss'] = kl_div_loss.item()
+                    # self.logger.experiment.add_scalar('total_loss', total_loss, self.num_samples)
+                    log_data['total_loss'] = total_loss.item()
                 
                 for key in ['vae', 'latent', 'mmd', 'chamfer', 'arg_cnt']:
                     if key in losses:
-                        self.logger.experiment.add_scalar(
-                            f'loss/{key}', losses[key], self.num_samples)
+                        log_data[f'loss/{key}'] = losses[key].item()
+                        # self.logger.experiment.add_scalar(
+                        #     f'loss/{key}', losses[key], self.num_samples)
+                wandb.log(log_data, step = self.num_samples)
 
         return {'loss': total_loss}
 
@@ -557,18 +637,22 @@ class LitModel(pl.LightningModule):
                                     cond = (cond + cond[i]) / 2
                             else:
                                 cond = None
-                                print("\n\n\nWorkflow reached to None conditioning\n\n\n")
+                                # print("\n\n\nWorkflow reached to None conditioning\n\n\n")
 
-                                # Adding classifier component and conditioning
-                                cond = model.encoder(_xstart)
-                                cond = model.classifier_component(x = _xstart, cond = cond)
+                        if self.conf.include_classifier:
+                            include_classifier = self.model.classifier_component
+                        else:
+                            include_classifier = None
+
 
                         gen = self.eval_sampler.sample(model=model,
                                                        noise=x_T,
                                                        cond=cond,
-                                                       x_start=_xstart)
+                                                       x_start=_xstart,
+                                                       include_classifier = include_classifier)
                     Gen.append(gen)
 
+                # print("\n\n\n Sampled, now logging \n\n\n")
                 gen = torch.cat(Gen)
                 gen = self.all_gather(gen)
                 if gen.dim() == 5:
@@ -583,9 +667,18 @@ class LitModel(pl.LightningModule):
 
                     if self.global_rank == 0:
                         grid_real = (make_grid(real) + 1) / 2
-                        self.logger.experiment.add_image(
-                            f'sample{postfix}/real', grid_real,
-                            self.num_samples)
+
+                        # self.logger.experiment.add_image(
+                        #     f'sample{postfix}/real', grid_real,
+                        #     self.num_samples)
+                        
+                        wandb.log({
+                                f'sample{postfix}/real': [Image(grid_real)],
+                                'num_samples': self.num_samples
+                            }, step = self.num_samples)
+                        
+                        # path = f"real_{self.num_samples}.png"
+                        # save_image(grid_real, path)
 
                 if self.global_rank == 0:
                     # save samples to the tensorboard
@@ -597,12 +690,23 @@ class LitModel(pl.LightningModule):
                     path = os.path.join(sample_dir,
                                         '%d.png' % self.num_samples)
                     save_image(grid, path)
-                    self.logger.experiment.add_image(f'sample{postfix}', grid,
-                                                     self.num_samples)
+
+                    # path = f"sampled_{self.num_samples}.png"
+                    # save_image(grid, path)
+
+                    # self.logger.experiment.add_image(f'sample{postfix}', grid,
+                    #                                  self.num_samples)
+                    wandb.log({
+                                f'sample{postfix}': [Image(grid)],
+                                'num_samples': self.num_samples
+                            }, step = self.num_samples)
+                    
+
             model.train()
 
         if self.conf.sample_every_samples > 0 and is_time(self.num_samples, self.conf.sample_every_samples, self.conf.batch_size_effective):
-
+        # x = True
+        # if x:       
             if self.conf.train_mode.require_dataset_infer():
                 do(self.model, '', use_xstart=False)
                 do(self.ema_model, '_ema', use_xstart=False)
@@ -623,7 +727,6 @@ class LitModel(pl.LightningModule):
                     do(self.ema_model, '_enc_ema', use_xstart=True, save_real=True)
 
                 else:
-                    print("\n\n\nYou were right \n\n\n")
                     do(self.model, '', use_xstart=True, save_real=True)
                     do(self.ema_model, '_ema', use_xstart=True, save_real=True)
 
@@ -644,8 +747,14 @@ class LitModel(pl.LightningModule):
                                  conds_mean=self.conds_mean,
                                  conds_std=self.conds_std)
             if self.global_rank == 0:
-                self.logger.experiment.add_scalar(f'FID{postfix}', score,
-                                                  self.num_samples)
+                # self.logger.experiment.add_scalar(f'FID{postfix}', score,
+                #                                   self.num_samples)
+                
+                wandb.log({
+                            f'FID{postfix}': score,
+                            # 'num_samples': self.num_samples
+                        }, step = self.num_samples)
+                
                 if not os.path.exists(self.conf.logdir):
                     os.makedirs(self.conf.logdir)
                 with open(os.path.join(self.conf.logdir, 'eval.txt'),
@@ -669,8 +778,11 @@ class LitModel(pl.LightningModule):
 
                 if self.global_rank == 0:
                     for key, val in score.items():
-                        self.logger.experiment.add_scalar(
-                            f'{key}{postfix}', val, self.num_samples)
+                        # self.logger.experiment.add_scalar(
+                        #     f'{key}{postfix}', val, self.num_samples)
+                        wandb.log({
+                                    f'{key}{postfix}': val,
+                                }, step = self.num_samples)
 
         if self.conf.eval_every_samples > 0 and self.num_samples > 0 and is_time(
                 self.num_samples, self.conf.eval_every_samples,
@@ -966,9 +1078,12 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
         else:
             resume = None
 
-    tb_logger = pl_loggers.TensorBoardLogger(save_dir=conf.logdir,
-                                             name=None,
-                                             version='')
+    # tb_logger = pl_loggers.TensorBoardLogger(save_dir=conf.logdir,
+    #                                          name=None,
+    #                                          version='')
+    
+    wandb.init(project = f"Diffusion_AE_{conf.name}", entity = "saranga7", config = conf.as_dict_jsonable())
+    wandb_logger = WandbLogger(name = conf.name, save_dir = conf.logdir)
 
     # from pytorch_lightning.
 
@@ -987,22 +1102,22 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
             plugins.append(DDPPlugin(find_unused_parameters=True))
 
     trainer = pl.Trainer(
-        max_steps=conf.total_samples // conf.batch_size_effective,
-        resume_from_checkpoint=resume,
-        gpus=gpus,
-        num_nodes=nodes,
-        accelerator=accelerator,
-        precision=16 if conf.fp16 else 32,
-        callbacks=[
+        max_steps = conf.total_samples // conf.batch_size_effective,
+        resume_from_checkpoint = resume,
+        gpus = gpus,
+        num_nodes = nodes,
+        accelerator = accelerator,
+        precision = 16 if conf.fp16 else 32,
+        callbacks = [
             checkpoint,
             LearningRateMonitor(),
         ],
         # clip in the model instead
         # gradient_clip_val=conf.grad_clip,
-        replace_sampler_ddp=True,
-        logger=tb_logger,
-        accumulate_grad_batches=conf.accum_batches,
-        plugins=plugins,
+        replace_sampler_ddp = True,
+        logger = wandb_logger,
+        accumulate_grad_batches = conf.accum_batches,
+        plugins = plugins,
     )
 
     torch.cuda.set_device(trainer.local_rank % len(gpus))
@@ -1034,9 +1149,10 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
 
         if get_rank() == 0:
             # save to tensorboard
-            for k, v in out.items():
-                tb_logger.experiment.add_scalar(
-                    k, v, state['global_step'] * conf.batch_size_effective)
+            # for k, v in out.items():
+            #     tb_logger.experiment.add_scalar(
+            #         k, v, state['global_step'] * conf.batch_size_effective)
+            wandb.log({k: v for k, v in out.items()}, step = state['global_step'] * conf.batch_size_effective)
 
             # # save to file
             # # make it a dict of list
@@ -1052,3 +1168,5 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
             print("\n\nFini!")
     else:
         raise NotImplementedError()
+    
+    wandb.finish()

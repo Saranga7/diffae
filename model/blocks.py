@@ -40,6 +40,15 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
             else:
                 x = layer(x)
         return x
+    
+class ClassifierEmbedding(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+        self.linear = nn.Linear(input_dim, output_dim)
+        self.activation = nn.SiLU()
+
+    def forward(self, x):
+        return self.activation(self.linear(x))
 
 
 @dataclass

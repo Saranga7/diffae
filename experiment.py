@@ -30,7 +30,6 @@ wandb.login(key = "280a63fbe206439a036945bcecd7d1f619763c7d")
 from pytorch_lightning.loggers import WandbLogger
 # wandb.init(project="Diffusion_AutoEncoder")
 
-    
 
 
 class LitModel(pl.LightningModule):
@@ -40,6 +39,8 @@ class LitModel(pl.LightningModule):
         if conf.seed is not None:
             pl.seed_everything(conf.seed)
 
+        
+            
         self.save_hyperparameters(conf.as_dict_jsonable())
 
         self.conf = conf
@@ -48,6 +49,11 @@ class LitModel(pl.LightningModule):
         self.ema_model = copy.deepcopy(self.model)
         self.ema_model.requires_grad_(False)
         self.ema_model.eval()
+
+        if self.conf.include_classifier:
+            print("Including classifier in the model")
+        else:
+            print("Not including classifier in the model")
 
         # Model Size
         model_size = 0
@@ -152,14 +158,19 @@ class LitModel(pl.LightningModule):
         pred_img = (pred_img + 1) / 2
         return pred_img
 
-    def encode(self, x, mode = 'ema'):
+    def encode(self, x, include_classifier = True, mode = 'ema'):
         # TODO:
         assert self.conf.model_type.has_autoenc()
         if mode == 'ema':
             model = self.ema_model
         else:
             model = self.model
-        cond = model.encoder.forward(x)
+
+        # Conditioning classifier specific information too now
+        if include_classifier:
+            cond = model.encoder.forward(x, classifier_output = model.classifier_component(x))
+        else:
+            cond = model.encoder.forward(x, classifier_output = None)
         return cond
 
     def encode_stochastic(self, x, cond, mode = 'ema', T=None):
@@ -376,8 +387,7 @@ class LitModel(pl.LightningModule):
         classifier_op_original_prob = F.softmax(classifier_op_original, dim = 1) 
 
         # Generate image
-        cond = self.encode(x_start, mode = mode)
-        cond = self.model.classifier_component(x = x_start, cond = cond)
+        cond = self.encode(x_start, include_classifier= self.conf.include_classifier, mode = mode)
         xT = self.encode_stochastic(x_start, cond, mode = mode)
         generated_image = self.render(xT, cond, mode = mode)
 
@@ -398,8 +408,7 @@ class LitModel(pl.LightningModule):
         classifier_op_original_prob = F.softmax(classifier_op_original, dim=1)
 
         # Generate image
-        cond = self.encode(x_start, mode = mode)
-        cond = self.model.classifier_component(x = x_start, cond = cond)
+        cond = self.encode(x_start, include_classifier= self.conf.include_classifier, mode = mode)
         xT = self.encode_stochastic(x_start, cond, mode = mode)
         generated_image = self.render(xT, cond, mode = mode)
 
@@ -441,20 +450,11 @@ class LitModel(pl.LightningModule):
                 t, weight = self.T_sampler.sample(len(x_start), x_start.device)
 
 
-                if self.conf.include_classifier:
-                    include_classifier = self.model.classifier_component
-                else:
-                    include_classifier = None
-
-                # print("\n\n\n Check inference code \n\n\n")
-                # self.log_sample(x_start = x_start)
-                # exit()
 
                 losses = self.sampler.training_losses(model = self.model,
-                                                            include_classifier = include_classifier,
-                                                            x_start = x_start,
-                                                            t = t,
-                                                            )
+                                                    include_classifier = self.conf.include_classifier,
+                                                    x_start = x_start,
+                                                    t = t,)
                  
 
             elif self.conf.train_mode.is_latent_diffusion():
@@ -489,19 +489,19 @@ class LitModel(pl.LightningModule):
 
                     if self.conf.classifier_loss == 'L2Norm':
                         l2_norm_loss = self._calculate_L2_norm(x_start)
-                        annealing_steps = 5_000_000  # Define over how many steps to anneal
+                        annealing_steps = self.conf.annealing_steps  # Define over how many steps to anneal
                         annealing_weight = min(1, (self.num_samples - self.conf.classifier_loss_start_step) / annealing_steps)
-                        weight = 0.3 * annealing_weight  # Max weight of 0.1
+                        weight = self.conf.classifier_loss_weightage * annealing_weight  
                         wandb.log({"L2Norm_weight": weight}, step = self.num_samples)
 
                         total_loss = loss + weight * l2_norm_loss
 
 
                     elif self.conf.classifier_loss == 'KLDiv':
-                        kl_div_loss = self._calculate_KL(x_start)  # Assume _calculate_KL calculates your KL divergence
-                        annealing_steps = 5_000_000  # Define over how many steps to anneal
+                        kl_div_loss = self._calculate_KL(x_start)  
+                        annealing_steps = self.conf.annealing_steps  # Define over how many steps to anneal
                         annealing_weight = min(1, (self.num_samples - self.conf.classifier_loss_start_step) / annealing_steps)
-                        weight = 0.1 * annealing_weight  # Max weight of 0.1
+                        weight = self.conf.classifier_loss_weightage * annealing_weight 
                         wandb.log({"KLDiv_weight": weight}, step = self.num_samples)
 
                         total_loss = loss + weight * kl_div_loss
@@ -639,17 +639,12 @@ class LitModel(pl.LightningModule):
                                 cond = None
                                 # print("\n\n\nWorkflow reached to None conditioning\n\n\n")
 
-                        if self.conf.include_classifier:
-                            include_classifier = self.model.classifier_component
-                        else:
-                            include_classifier = None
-
 
                         gen = self.eval_sampler.sample(model=model,
                                                        noise=x_T,
                                                        cond=cond,
                                                        x_start=_xstart,
-                                                       include_classifier = include_classifier)
+                                                       include_classifier = self.conf.include_classifier)
                     Gen.append(gen)
 
                 # print("\n\n\n Sampled, now logging \n\n\n")
@@ -1082,7 +1077,7 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
     #                                          name=None,
     #                                          version='')
     
-    wandb.init(project = f"Diffusion_AE_{conf.name}", entity = "saranga7", config = conf.as_dict_jsonable())
+    wandb.init(project = f"DiffAE_{conf.name}", entity = "saranga7", config = conf.as_dict_jsonable())
     wandb_logger = WandbLogger(name = conf.name, save_dir = conf.logdir)
 
     # from pytorch_lightning.
@@ -1097,9 +1092,9 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
         # important for working with gradient checkpoint
 
         if conf.classifier_path:
-            plugins.append(DDPPlugin(find_unused_parameters=False))
-        else:
             plugins.append(DDPPlugin(find_unused_parameters=True))
+        else:
+            plugins.append(DDPPlugin(find_unused_parameters=False))
 
     trainer = pl.Trainer(
         max_steps = conf.total_samples // conf.batch_size_effective,

@@ -52,10 +52,10 @@ def render_condition(
         assert conf.model_type.has_autoenc()
         # returns {'cond', 'cond2'}
         if cond is None:
-            cond = model.encode(x_start)
+            cond = model.encode(x_start, include_classifier = conf.include_classifier)
             
-            if conf.include_classifier:
-                cond = model.classifier_component(x = x_start, cond = cond)
+            # if conf.include_classifier:
+            #     cond = model.classifier_component(x = x_start, cond = cond)
                 
         return sampler.sample(model=model,
                               noise=x_T,

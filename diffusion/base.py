@@ -101,7 +101,7 @@ class GaussianDiffusionBeatGans:
                         model: Model,
                         x_start: th.Tensor,
                         t: th.Tensor,
-                        include_classifier = None,
+                        include_classifier = False,
                         model_kwargs=None,
                         noise: th.Tensor = None):
         """
@@ -189,7 +189,7 @@ class GaussianDiffusionBeatGans:
                clip_denoised=True,
                model_kwargs=None,
                progress=False,
-               include_classifier = None):
+               include_classifier = False):
         """
         Args:
             x_start: given for the autoencoder
@@ -282,7 +282,7 @@ class GaussianDiffusionBeatGans:
                         clip_denoised=True,
                         denoised_fn=None,
                         model_kwargs=None,
-                        include_classifier = None):
+                        include_classifier = False):
         """
         Apply the model to get p(x_{t-1} | x_t), as well as a prediction of
         the initial x, x_0.
@@ -597,7 +597,7 @@ class GaussianDiffusionBeatGans:
         cond_fn=None,
         model_kwargs=None,
         eta=0.0,
-        include_classifier = None,
+        include_classifier = False,
     ):
         """
         Sample x_{t-1} from the model using DDIM.
@@ -733,7 +733,7 @@ class GaussianDiffusionBeatGans:
         device=None,
         progress=False,
         eta=0.0,
-        include_classifier = None,
+        include_classifier = False,
     ):
         """
         Generate samples from the model using DDIM.
@@ -769,7 +769,7 @@ class GaussianDiffusionBeatGans:
         device=None,
         progress=False,
         eta=0.0,
-        include_classifier = None,
+        include_classifier = False,
     ):
         """
         Use DDIM to sample from the model and yield intermediate samples from

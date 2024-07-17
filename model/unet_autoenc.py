@@ -20,34 +20,25 @@ class BeatGANsAutoencConfig(BeatGANsUNetConfig):
     enc_grad_checkpoint: bool = False
     latent_net_conf: MLPSkipNetConfig = None
 
+
     def make_model(self):
         return BeatGANsAutoencModel(self)
     
 
 class Classifier_Component(nn.Module):
-
-    def __init__(self, classifier_checkpoint_path, style_dim, num_classes = 2):
+    def __init__(self, classifier_checkpoint_path, num_classes = 2):
         super().__init__()
         self.mobile_net = torch.hub.load('pytorch/vision:v0.10.0', 'mobilenet_v2')
         self.mobile_net.classifier[1] = nn.Linear(1280, num_classes)
-        self.mobile_net.load_state_dict(torch.load(classifier_checkpoint_path))# map_location = device))
+        self.mobile_net.load_state_dict(torch.load(classifier_checkpoint_path))
 
         for param in self.mobile_net.parameters():
                 param.requires_grad = False
 
-        # self.linear_projection = nn.Sequential(
-        #         nn.BatchNorm1d(style_dim + num_classes), 
-        #         nn.Linear(style_dim + num_classes, style_dim)
-        #     )
-
-        self.linear_projection = nn.Linear(style_dim + num_classes, style_dim)
-        
-    def forward(self, x, cond):       
+    def forward(self, x):       
         logits = self.mobile_net(x)
         probabilities = F.softmax(logits, dim = 1)
-
-        cond_class = torch.cat([probabilities, cond], axis = 1)
-        return self.linear_projection(cond_class)
+        return probabilities
 
 
 
@@ -84,11 +75,10 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
             pool=conf.enc_pool,
         ).make_model()
 
-        # print('Classifier path:', conf.classifier_path)
-        # if self.conf.include_classifier:
-        classifier_path = "checkpoints/classifier/FFHQ_Gender.pth"
-        self.classifier_component = Classifier_Component(classifier_checkpoint_path = classifier_path, 
-                                                        style_dim = conf.enc_out_channels)
+        print('Classifier path:', conf.classifier_path)
+        # classifier_path = "checkpoints/classifier/FFHQ_Gender.pth"
+        self.classifier_component = Classifier_Component(classifier_checkpoint_path = conf.classifier_path, 
+                                                         num_classes = 2)
 
         if conf.latent_net_conf is not None:
             self.latent_net = conf.latent_net_conf.make_model()
@@ -115,8 +105,11 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
         assert self.conf.noise_net_conf is not None
         return self.noise_net.forward(noise)
 
-    def encode(self, x):
-        cond = self.encoder.forward(x)
+    def encode(self, x, include_classifier = False):
+        if include_classifier:
+            cond = self.encoder.forward(x, classifier_output = self.classifier_component(x))
+        else:
+            cond = self.encoder.forward(x, classifier_output = None)
         # return {'cond': cond}
         return cond
 
@@ -161,7 +154,7 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
                 style=None,
                 noise=None,
                 t_cond=None,
-                include_classifier = None,
+                include_classifier = False,
                 **kwargs):
         """
         Apply the model to an input batch.
@@ -187,13 +180,14 @@ class BeatGANsAutoencModel(BeatGANsUNetModel):
 
             # tmp = self.encode(x_start)
             # cond = tmp['cond']
-            cond = self.encode(x_start)
+            
+            cond = self.encode(x_start, include_classifier = include_classifier)
 
 
-        # Add classifier here
-        if include_classifier is not None:
-            # print("\n\nClassifier included")
-            cond = include_classifier(x = x_start, cond = cond)
+        # # Add classifier here
+        # if include_classifier is not None:
+        #     # print("\n\nClassifier included")
+        #     cond = include_classifier(x = x_start, cond = cond)
 
 
 

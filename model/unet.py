@@ -69,8 +69,9 @@ class BeatGANsUNetConfig(BaseConfig):
     resnet_use_zero_module: bool = True
     # gradient checkpoint the attention operation
     attn_checkpoint: bool = False
-    # # I added the classifier component flag
-    # include_classifier: bool = False
+    classifier_path: str = None
+
+    
 
     def make_model(self):
         return BeatGANsUNetModel(self)
@@ -389,6 +390,12 @@ class BeatGANsEncoderModel(nn.Module):
         self.conf = conf
         self.dtype = th.float32
 
+        classifier_output_dim = 2  # Assuming binary classifier with 2 output nodes
+        embedding_dim = conf.model_channels * 4  # Assuming embedding dimension based on your configuration
+        #  Embedding for classifier output
+        self.classifier_embedding = ClassifierEmbedding(classifier_output_dim, embedding_dim)
+
+
         if conf.use_time_condition:
             time_embed_dim = conf.model_channels * 4
             self.time_embed = nn.Sequential(
@@ -497,7 +504,7 @@ class BeatGANsEncoderModel(nn.Module):
         else:
             raise NotImplementedError(f"Unexpected {conf.pool} pooling")
 
-    def forward(self, x, t=None, return_2d_feature=False):
+    def forward(self, x, classifier_output = None, t=None, return_2d_feature=False):
         """
         Apply the model to an input batch.
 
@@ -505,10 +512,20 @@ class BeatGANsEncoderModel(nn.Module):
         :param timesteps: a 1-D batch of timesteps.
         :return: an [N x K] Tensor of outputs.
         """
+
+    
+
         if self.conf.use_time_condition:
             emb = self.time_embed(timestep_embedding(t, self.model_channels))
+            emb += self.classifier_embedding(classifier_output)  # Combine time and classifier embeddings
+        elif classifier_output is not None:
+            emb = self.classifier_embedding(classifier_output)
+            # print("\n\n\n Classifier embedding:")
+            # print(emb)
+            # print("\n\n\n")
         else:
             emb = None
+
 
         results = []
         h = x.type(self.dtype)

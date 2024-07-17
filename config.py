@@ -150,9 +150,9 @@ class TrainConfig(BaseConfig):
     sample_every_samples: int = 20_000
     save_every_samples: int = 100_000
     style_ch: int = 512
-    T_eval: int = 1_000
+    T_eval: int = 500
     T_sampler: str = 'uniform'
-    T: int = 1_000
+    T: int = 500
     total_samples: int = 10_000_000
     warmup: int = 0
     pretrain: PretrainConfig = None
@@ -171,6 +171,8 @@ class TrainConfig(BaseConfig):
     classifier_path = 'checkpoints/classifier/FFHQ_Gender.pth'
     classifier_loss_start_step = 0
     classifier_loss = 'KLDiv'
+    annealing_steps = 3_000_000
+    classifier_loss_weightage = 0.1 # Maximum classification loss contributing to the training
 
     def __post_init__(self):
         self.batch_size_eval = self.batch_size_eval or self.batch_size
@@ -365,7 +367,6 @@ class TrainConfig(BaseConfig):
                 resnet_two_cond=self.net_beatgans_resnet_two_cond,
                 resnet_use_zero_module=self.
                 net_beatgans_resnet_use_zero_module,
-                # include_classifier=self.include_classifier,
             )
         elif self.model_name in [
                 ModelName.beatgans_autoenc,
@@ -396,6 +397,7 @@ class TrainConfig(BaseConfig):
                 )
             else:
                 raise NotImplementedError()
+            
 
             self.model_conf = cls(
                 attention_resolutions=self.net_attn,
@@ -428,6 +430,7 @@ class TrainConfig(BaseConfig):
                 net_beatgans_resnet_use_zero_module,
                 latent_net_conf=latent_net_conf,
                 resnet_cond_channels=self.net_beatgans_resnet_cond_channels,
+                classifier_path=self.classifier_path,
             )
         else:
             raise NotImplementedError(self.model_name)

@@ -56,6 +56,7 @@ def render_condition(
             
             if conf.include_classifier:
                 cond = model.classifier_component(x = x_start, cond = cond)
+                print("classifier included")
                 
         return sampler.sample(model=model,
                               noise=x_T,

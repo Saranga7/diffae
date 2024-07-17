@@ -1066,6 +1066,13 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
                                  save_top_k=1,
                                  every_n_train_steps=conf.save_every_samples //
                                  conf.batch_size_effective)
+    
+    epoch_checkpoint_callback = ModelCheckpoint(dirpath=f'{conf.logdir}/epoch_checkpoints',
+                                                save_top_k=-1,  # save all checkpoints
+                                                every_n_epochs=20,  # save checkpoint every 20 epochs
+                                                )
+
+
     checkpoint_path = f'{conf.logdir}/last.ckpt'
     print('ckpt path:', checkpoint_path)
     if os.path.exists(checkpoint_path):
@@ -1110,6 +1117,7 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
         precision = 16 if conf.fp16 else 32,
         callbacks = [
             checkpoint,
+            epoch_checkpoint_callback,
             LearningRateMonitor(),
         ],
         # clip in the model instead
@@ -1117,7 +1125,7 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
         replace_sampler_ddp = True,
         logger = wandb_logger,
         accumulate_grad_batches = conf.accum_batches,
-        plugins = plugins,
+        plugins = plugins, 
     )
 
     torch.cuda.set_device(trainer.local_rank % len(gpus))

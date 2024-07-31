@@ -12,6 +12,9 @@ datasets/celeba.lmdb
 datasets/celeba
 checkpoints
 output_logs/
+pca_analysis_results/
+imgs/
+imgs_align/
 
 .ipynb_checkpoints/
 wandb/

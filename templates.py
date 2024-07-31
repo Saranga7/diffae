@@ -201,6 +201,17 @@ def ffhq128_autoenc_130M():
     return conf
 
 
+
+def ffhq128_autoenc_130M_part2():
+    conf = ffhq128_autoenc_base()
+    conf.total_samples = 130_000_000
+    conf.eval_ema_every_samples = 10_000_000
+    conf.eval_every_samples = 10_000_000
+    conf.name = 'ffhq128_autoenc_130M_part2'
+    return conf
+
+
+
 def horse128_ddpm():
     conf = ffhq128_ddpm()
     conf.data_name = 'horse256'

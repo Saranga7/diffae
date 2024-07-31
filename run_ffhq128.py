@@ -5,7 +5,7 @@ if __name__ == '__main__':
     # train the autoenc moodel
     # this requires V100s.
     gpus = [1, 2]
-    conf = ffhq128_autoenc_130M()
+    conf = ffhq128_autoenc_130M_part2()
     train(conf, gpus=gpus)
 
     # # infer the latents for training the latent DPM

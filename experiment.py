@@ -24,6 +24,12 @@ from lmdb_writer import *
 from metrics import *
 from renderer import *
 
+import wandb
+from wandb import Image
+wandb.login(key = "280a63fbe206439a036945bcecd7d1f619763c7d")
+from pytorch_lightning.loggers import WandbLogger
+
+
 
 class LitModel(pl.LightningModule):
     def __init__(self, conf: TrainConfig):
@@ -516,9 +522,14 @@ class LitModel(pl.LightningModule):
 
                     if self.global_rank == 0:
                         grid_real = (make_grid(real) + 1) / 2
-                        self.logger.experiment.add_image(
-                            f'sample{postfix}/real', grid_real,
-                            self.num_samples)
+                        # self.logger.experiment.add_image(
+                        #     f'sample{postfix}/real', grid_real,
+                        #     self.num_samples)
+                        
+                        wandb.log({
+                                f'sample{postfix}/real': [Image(grid_real)],
+                                'num_samples': self.num_samples
+                            }, step = self.num_samples)
 
                 if self.global_rank == 0:
                     # save samples to the tensorboard
@@ -530,8 +541,12 @@ class LitModel(pl.LightningModule):
                     path = os.path.join(sample_dir,
                                         '%d.png' % self.num_samples)
                     save_image(grid, path)
-                    self.logger.experiment.add_image(f'sample{postfix}', grid,
-                                                     self.num_samples)
+                    # self.logger.experiment.add_image(f'sample{postfix}', grid,
+                    #                                  self.num_samples)
+                    wandb.log({
+                                f'sample{postfix}': [Image(grid)],
+                                'num_samples': self.num_samples
+                            }, step = self.num_samples)
             model.train()
 
         if self.conf.sample_every_samples > 0 and is_time(
@@ -587,8 +602,13 @@ class LitModel(pl.LightningModule):
                                  conds_mean=self.conds_mean,
                                  conds_std=self.conds_std)
             if self.global_rank == 0:
-                self.logger.experiment.add_scalar(f'FID{postfix}', score,
-                                                  self.num_samples)
+                # self.logger.experiment.add_scalar(f'FID{postfix}', score,
+                #                                   self.num_samples)
+                wandb.log({
+                            f'FID{postfix}': score,
+                            # 'num_samples': self.num_samples
+                        }, step = self.num_samples)
+                
                 if not os.path.exists(self.conf.logdir):
                     os.makedirs(self.conf.logdir)
                 with open(os.path.join(self.conf.logdir, 'eval.txt'),
@@ -612,8 +632,11 @@ class LitModel(pl.LightningModule):
 
                 if self.global_rank == 0:
                     for key, val in score.items():
-                        self.logger.experiment.add_scalar(
-                            f'{key}{postfix}', val, self.num_samples)
+                        # self.logger.experiment.add_scalar(
+                        #     f'{key}{postfix}', val, self.num_samples)
+                        wandb.log({
+                                    f'{key}{postfix}': val,
+                                }, step = self.num_samples)
 
         if self.conf.eval_every_samples > 0 and self.num_samples > 0 and is_time(
                 self.num_samples, self.conf.eval_every_samples,
@@ -878,7 +901,7 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
     print('conf:', conf.name)
     # assert not (conf.fp16 and conf.grad_clip > 0
     #             ), 'pytorch lightning has bug with amp + gradient clipping'
-    model = LitModel(conf)
+    # model = LitModel(conf)
 
     if not os.path.exists(conf.logdir):
         os.makedirs(conf.logdir)
@@ -887,6 +910,13 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
                                  save_top_k=1,
                                  every_n_train_steps=conf.save_every_samples //
                                  conf.batch_size_effective)
+    
+    epoch_checkpoint_callback = ModelCheckpoint(dirpath=f'{conf.logdir}/epoch_checkpoints',
+                                                save_top_k=-1,  # save all checkpoints
+                                                every_n_epochs=20,  # save checkpoint every 20 epochs
+                                                )
+
+
     checkpoint_path = f'{conf.logdir}/last.ckpt'
     print('ckpt path:', checkpoint_path)
     if os.path.exists(checkpoint_path):
@@ -899,9 +929,12 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
         else:
             resume = None
 
-    tb_logger = pl_loggers.TensorBoardLogger(save_dir=conf.logdir,
-                                             name=None,
-                                             version='')
+    # tb_logger = pl_loggers.TensorBoardLogger(save_dir=conf.logdir,
+    #                                          name=None,
+    #                                          version='')
+    
+    wandb.init(project = f"DiffAE_{conf.name}", entity = "saranga7", config = conf.as_dict_jsonable())
+    wandb_logger = WandbLogger(name = conf.name, save_dir = conf.logdir)
 
     # from pytorch_lightning.
 
@@ -913,29 +946,41 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
         from pytorch_lightning.plugins import DDPPlugin
 
         # important for working with gradient checkpoint
-        plugins.append(DDPPlugin(find_unused_parameters=False))
+
+        if conf.classifier_path:
+            plugins.append(DDPPlugin(find_unused_parameters=True))
+        else:
+            plugins.append(DDPPlugin(find_unused_parameters=False))
 
     trainer = pl.Trainer(
-        max_steps=conf.total_samples // conf.batch_size_effective,
-        resume_from_checkpoint=resume,
-        gpus=gpus,
-        num_nodes=nodes,
-        accelerator=accelerator,
-        precision=16 if conf.fp16 else 32,
-        callbacks=[
+        max_steps = conf.total_samples // conf.batch_size_effective,
+        resume_from_checkpoint = resume,
+        gpus = gpus,
+        num_nodes = nodes,
+        accelerator = accelerator,
+        precision = 16 if conf.fp16 else 32,
+        callbacks = [
             checkpoint,
+            epoch_checkpoint_callback,
             LearningRateMonitor(),
         ],
         # clip in the model instead
         # gradient_clip_val=conf.grad_clip,
-        replace_sampler_ddp=True,
-        logger=tb_logger,
-        accumulate_grad_batches=conf.accum_batches,
-        plugins=plugins,
+        replace_sampler_ddp = True,
+        logger = wandb_logger,
+        accumulate_grad_batches = conf.accum_batches,
+        plugins = plugins, 
     )
+
+    torch.cuda.set_device(trainer.local_rank % len(gpus))
+    torch.cuda.empty_cache()
+    
+    model = LitModel(conf)
 
     if mode == 'train':
         trainer.fit(model)
+        print("\n\nTraining completed")
+
     elif mode == 'eval':
         # load the latest checkpoint
         # perform lpips
@@ -956,9 +1001,10 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
 
         if get_rank() == 0:
             # save to tensorboard
-            for k, v in out.items():
-                tb_logger.experiment.add_scalar(
-                    k, v, state['global_step'] * conf.batch_size_effective)
+            # for k, v in out.items():
+            #     tb_logger.experiment.add_scalar(
+            #         k, v, state['global_step'] * conf.batch_size_effective)
+            wandb.log({k: v for k, v in out.items()}, step = state['global_step'] * conf.batch_size_effective)
 
             # # save to file
             # # make it a dict of list
@@ -971,5 +1017,8 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
             with open(tgt, 'a') as f:
                 f.write(json.dumps(out) + "\n")
             # pd.DataFrame(out).to_csv(tgt)
+            print("\n\nFini!")
     else:
         raise NotImplementedError()
+    
+    wandb.finish()

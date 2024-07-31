@@ -947,10 +947,7 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
 
         # important for working with gradient checkpoint
 
-        if conf.classifier_path:
-            plugins.append(DDPPlugin(find_unused_parameters=True))
-        else:
-            plugins.append(DDPPlugin(find_unused_parameters=False))
+        plugins.append(DDPPlugin(find_unused_parameters=False))
 
     trainer = pl.Trainer(
         max_steps = conf.total_samples // conf.batch_size_effective,

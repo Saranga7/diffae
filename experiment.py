@@ -123,39 +123,54 @@ class LitModel(pl.LightningModule):
         pred_img = (pred_img + 1) / 2
         return pred_img
 
-    def render(self, noise, cond=None, T=None):
+    def render(self, noise, cond=None, T=None, mode = 'ema'):
         if T is None:
             sampler = self.eval_sampler
         else:
             sampler = self.conf._make_diffusion_conf(T).make_sampler()
+        
+        if mode == 'ema':
+            model = self.ema_model
+        else:
+            model = self.model
 
         if cond is not None:
             pred_img = render_condition(self.conf,
-                                        self.ema_model,
+                                        model,
                                         noise,
                                         sampler=sampler,
                                         cond=cond)
         else:
             pred_img = render_uncondition(self.conf,
-                                          self.ema_model,
+                                          model,
                                           noise,
                                           sampler=sampler,
                                           latent_sampler=None)
         pred_img = (pred_img + 1) / 2
         return pred_img
 
-    def encode(self, x):
+    def encode(self, x, mode = 'ema'):
         # TODO:
         assert self.conf.model_type.has_autoenc()
-        cond = self.ema_model.encoder.forward(x)
+
+        if mode == 'ema':
+            cond = self.ema_model.encoder.forward(x)
+        else:
+            cond = self.model.encoder.forward(x)
         return cond
 
-    def encode_stochastic(self, x, cond, T=None):
+    def encode_stochastic(self, x, cond, T=None, mode = 'ema'):
         if T is None:
             sampler = self.eval_sampler
         else:
             sampler = self.conf._make_diffusion_conf(T).make_sampler()
-        out = sampler.ddim_reverse_sample_loop(self.ema_model,
+
+        if mode == 'ema':
+            model = self.ema_model
+        else:
+            model = self.model
+             
+        out = sampler.ddim_reverse_sample_loop(model,
                                                x,
                                                model_kwargs={'cond': cond})
         return out['sample']

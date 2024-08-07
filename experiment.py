@@ -404,12 +404,17 @@ class LitModel(pl.LightningModule):
                     losses[key] = self.all_gather(losses[key]).mean()
 
             if self.global_rank == 0:
-                self.logger.experiment.add_scalar('loss', losses['loss'],
-                                                  self.num_samples)
+                log_data = {
+                            'loss': losses['loss'].item(),  
+                        }
+                # self.logger.experiment.add_scalar('loss', losses['loss'],
+                #                                   self.num_samples)
                 for key in ['vae', 'latent', 'mmd', 'chamfer', 'arg_cnt']:
                     if key in losses:
-                        self.logger.experiment.add_scalar(
-                            f'loss/{key}', losses[key], self.num_samples)
+                        log_data[f'loss/{key}'] = losses[key].item()
+                        # self.logger.experiment.add_scalar(
+                        #     f'loss/{key}', losses[key], self.num_samples)
+                wandb.log(log_data, step = self.num_samples)
 
         return {'loss': loss}
 

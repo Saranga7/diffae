@@ -4,9 +4,12 @@ from templates_latent import *
 if __name__ == '__main__':
     # train the autoenc moodel
     # this requires V100s.
-    gpus = [1, 2]
+    gpus = [0, 1, 2, 3]
     conf = ffhq128_autoenc_130M_part2()
     train(conf, gpus=gpus)
+
+    conf.batch_size = 64
+    conf.accum_batches = 4
 
     # # infer the latents for training the latent DPM
     # # NOTE: not gpu heavy, but more gpus can be of use!

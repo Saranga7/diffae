@@ -1,4 +1,5 @@
 import os
+import glob
 from io import BytesIO
 from pathlib import Path
 
@@ -175,7 +176,11 @@ class FFHQlmdb(Dataset):
             transform.append(transforms.ToTensor())
         if do_normalize:
             transform.append(
-                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)))
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)) 
+                # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                )
+                
+            
         self.transform = transforms.Compose(transform)
 
     def __len__(self):
@@ -714,3 +719,68 @@ class Repeat(Dataset):
     def __getitem__(self, index):
         index = index % self.original_len
         return self.dataset[index]
+
+
+
+
+
+
+
+
+
+class AnnotatedFFHQDataset(Dataset):
+    def __init__(self, root, 
+                 img_size = 256, 
+                 label="gender",
+                 do_augment : bool = False,
+                 do_transform : bool = True,
+                 do_normalize : bool = True):
+        """
+        PyTorch DataSet for the FFHQ-Age dataset.
+        :param root: Root folder that contains a directory for the dataset and the csv with labels in the root directory.
+        :param label: Label we want to train on, chosen from the csv labels list.
+        """
+        self.root = root
+        self.target_class = label
+
+        # Store image paths
+        data_path = os.path.join(self.root, "Kaggle_FFHQ_Resized_256px", "flickrfaceshq-dataset-nvidia-resized-256px", "resized")
+        self.images = glob.glob(f"{data_path}/*.jpg")
+
+        # Import labels from a CSV file
+        self.labels = pd.read_csv(os.path.join(self.root, "Kaggle_FFHQ_Resized_256px", "ffhq_aging_labels.csv"))
+
+        # Image transformation
+        transform = [
+            transforms.Resize(img_size),
+            transforms.CenterCrop(img_size),
+        ]
+        if do_augment:
+            transform.append(transforms.RandomHorizontalFlip())
+        if do_transform:
+            transform.append(transforms.ToTensor())
+        if do_normalize:
+            transform.append(
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)))
+        self.transform = transforms.Compose(transform)
+
+        # Make a lookup dictionary for the labels
+        # Get column names of dataframe
+        cols = self.labels.columns.values
+        label_ids = {col_name: i for i, col_name in enumerate(cols)}
+        self.class_id = label_ids[self.target_class]
+
+        self.one_hot_encoding = {"male": 0,
+                                 "female": 1}
+        
+    def __len__(self):
+        return len(self.images)
+
+
+    def __getitem__(self, index):
+        img = self.transform(Image.open(self.images[index]))
+        label = self.one_hot_encoding[self.labels.iloc[index, self.class_id]]
+        return {'img': img, 'index': index, 'labels': torch.tensor(label)}
+    
+
+
